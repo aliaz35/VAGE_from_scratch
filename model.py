@@ -27,41 +27,41 @@ class VAE(nn.Module, ABC):
         noise = torch.rand_like(p.log_sigma)
         return p.mu + noise * torch.exp(p.log_sigma)
 
-    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        bottleneck = self.encoder(x)
+    def forward(self, *args, **kwargs) -> tuple[torch.Tensor, torch.Tensor]:
+        bottleneck = self.encoder(*args)
         return self.decoder(bottleneck), bottleneck
 
 class Encoder(nn.Module):
-    def __init__(self, num_features, num_hidden):
+    def __init__(self, args: argparse.Namespace):
         super().__init__()
         self.distribution: NormalDistribution = NormalDistribution()
         self._shared_gcn = GraphConv(
-            num_features,
-            num_hidden,
+            args.num_features,
+            args.num_hidden,
             activation=nn.ReLU()
         )
         self.encoder = {
             "log_sigma": nn.Sequential(
                 self._shared_gcn,
-                GraphConv(num_hidden, num_hidden)
+                GraphConv(args.num_hidden, args.num_hidden)
             ),
             "mu": nn.Sequential(
                 self._shared_gcn,
-                GraphConv(num_hidden, num_hidden)
+                GraphConv(args.num_hidden, args.num_hidden)
             )
         }
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, graph: dgl.DGLGraph, feat: torch.Tensor) -> torch.Tensor:
         distribution =  NormalDistribution(
-            mu          = self.encoder["mu"](x),
-            log_sigma   = self.encoder["log_sigma"](x)
+            mu          = self.encoder["mu"](graph, feat),
+            log_sigma   = self.encoder["log_sigma"](graph, feat)
         )
         self.distribution = distribution
 
         return VAE.sample_latent(distribution)
 
 class Decoder(nn.Module):
-    def __init__(self):
+    def __init__(self, args: argparse.Namespace):
         super().__init__()
         self.sigmoid = nn.Sigmoid()
 
@@ -72,8 +72,8 @@ class Decoder(nn.Module):
 class VGAE(VAE):
     def __init__(self, args: argparse.Namespace):
         super().__init__()
-        self.encoder = Encoder(args.num_features, args.num_hidden)
-        self.decoder = Decoder()
+        self.encoder = Encoder(args)
+        self.decoder = Decoder(args)
 
     def distribution(self) -> NormalDistribution:
         return self.decoder.distribution
