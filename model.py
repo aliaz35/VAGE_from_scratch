@@ -6,6 +6,7 @@ import torch.nn as nn
 import dgl
 import dgl.function as fn
 from dgl.nn.pytorch import GraphConv
+from dgl.nn.pytorch import Sequential
 
 from abc import ABC, abstractmethod
 
@@ -32,22 +33,22 @@ class VAE(nn.Module, ABC):
         return self.decoder(bottleneck), bottleneck
 
 class Encoder(nn.Module):
-    def __init__(self, args: argparse.Namespace):
+    def __init__(self, in_feats: int, out_feats: int):
         super().__init__()
         self.distribution: NormalDistribution = NormalDistribution()
         self._shared_gcn = GraphConv(
-            args.num_features,
-            args.num_hidden,
+            in_feats,
+            out_feats,
             activation=nn.ReLU()
         )
         self.encoder = {
-            "log_sigma": nn.Sequential(
+            "log_sigma": Sequential(
                 self._shared_gcn,
-                GraphConv(args.num_hidden, args.num_hidden)
+                GraphConv(out_feats, out_feats)
             ),
-            "mu": nn.Sequential(
+            "mu": Sequential(
                 self._shared_gcn,
-                GraphConv(args.num_hidden, args.num_hidden)
+                GraphConv(out_feats, out_feats)
             )
         }
 
@@ -61,7 +62,7 @@ class Encoder(nn.Module):
         return VAE.sample_latent(distribution)
 
 class Decoder(nn.Module):
-    def __init__(self, args: argparse.Namespace):
+    def __init__(self):
         super().__init__()
         self.sigmoid = nn.Sigmoid()
 
@@ -70,10 +71,10 @@ class Decoder(nn.Module):
 
 
 class VGAE(VAE):
-    def __init__(self, args: argparse.Namespace):
+    def __init__(self, in_feats: int, hidden_feats: int):
         super().__init__()
-        self.encoder = Encoder(args)
-        self.decoder = Decoder(args)
+        self.encoder = Encoder(in_feats=in_feats, out_feats=hidden_feats)
+        self.decoder = Decoder()
 
     def distribution(self) -> NormalDistribution:
-        return self.decoder.distribution
+        return self.encoder.distribution
