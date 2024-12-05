@@ -19,19 +19,9 @@ class NormalDistribution:
     mu : torch.Tensor = 0
     log_sigma : torch.Tensor = 0
 
-class VAE(nn.Module, ABC):
-    @abstractmethod
-    def __init__(self):
-        super().__init__()
-
-    @staticmethod
-    def sample_latent(p: NormalDistribution) -> torch.Tensor:
-        noise = torch.rand_like(p.log_sigma)
-        return p.mu + noise * torch.exp(p.log_sigma)
-
-    def forward(self, *args, **kwargs) -> tuple[torch.Tensor, torch.Tensor]:
-        bottleneck = self.encoder(*args)
-        return self.decoder(bottleneck), bottleneck
+def sample_latent(p: NormalDistribution) -> torch.Tensor:
+    noise = torch.randn_like(p.log_sigma)
+    return p.mu + noise * torch.exp(p.log_sigma)
 
 class Encoder(nn.Module):
     def __init__(self, in_feats: int, hidden_feats: int, out_feats: int):
@@ -40,6 +30,7 @@ class Encoder(nn.Module):
         self._shared_gcn = GraphConv(
             in_feats,
             hidden_feats,
+            weight=True,
             norm="left",
             activation=nn.ReLU()
         )
@@ -49,6 +40,7 @@ class Encoder(nn.Module):
                 GraphConv(
                     hidden_feats,
                     out_feats,
+                    weight=True,
                     norm="left",
                 )
             ),
@@ -57,19 +49,19 @@ class Encoder(nn.Module):
                 GraphConv(
                     hidden_feats,
                     out_feats,
+                    weight=True,
                     norm="left"
                 )
             )
         }
 
     def forward(self, graph: dgl.DGLGraph, feat: torch.Tensor) -> torch.Tensor:
-        distribution =  NormalDistribution(
+        self.distribution =  NormalDistribution(
             mu          = self.encoder["mu"](graph, feat),
             log_sigma   = self.encoder["log_sigma"](graph, feat)
         )
-        self.distribution = distribution
 
-        return VAE.sample_latent(distribution)
+        return sample_latent(self.distribution)
 
 class Decoder(nn.Module):
     def __init__(self):
@@ -77,10 +69,10 @@ class Decoder(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, bottleneck: torch.Tensor) -> torch.Tensor:
+        bottleneck = bottleneck / bottleneck.norm(dim=1, keepdim=True)
         return self.sigmoid(bottleneck @ bottleneck.t())
 
-
-class VGAE(VAE):
+class VGAE(nn.Module):
     def __init__(self, in_feats: int, hidden_feats: int, out_feats: int):
         super().__init__()
         self.encoder = Encoder(in_feats=in_feats, hidden_feats=hidden_feats, out_feats=out_feats)
@@ -88,3 +80,8 @@ class VGAE(VAE):
 
     def distribution(self) -> NormalDistribution:
         return self.encoder.distribution
+
+
+    def forward(self, *args, **kwargs) -> tuple[torch.Tensor, torch.Tensor]:
+        bottleneck = self.encoder(*args)
+        return self.decoder(bottleneck), bottleneck
