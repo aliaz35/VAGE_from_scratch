@@ -46,7 +46,7 @@ class DataLoader:
         self.train_graph = dgl.to_bidirected(dgl.graph(
             tuple(zip(*sampled_edges["train"])),
             num_nodes=self.adj.shape[0]
-        ).add_self_loop())
+        ))
         self.valid_edges = sampled_edges["valid"]
         self.test_edges = sampled_edges["test"]
 

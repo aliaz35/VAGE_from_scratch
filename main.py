@@ -33,15 +33,20 @@ class _KLDivergence(nn.Module):
 
 
 class Loss(nn.Module):
-    def __init__(self, adj: torch.Tensor):
+    def __init__(self, train_graph: dgl.DGLGraph):
         super().__init__()
-        self.bce_norm = adj.shape[0] * adj.shape[0] / (adj.shape[0] * adj.shape[0] - adj.sum()) * 2
-        pos_weight = adj.shape[0] * adj.shape[0] - adj.sum() / adj.sum()
-        self.bce_weight = torch.tensor([1 if e == 0 else pos_weight for e in adj.to_dense().view(-1)])
-        self.kl_norm = 1 / adj.shape[0]
+        all_edges_count = train_graph.num_nodes() * train_graph.num_nodes()
+        self.bce_norm = all_edges_count / ((all_edges_count - train_graph.num_edges()) * 2)
+        pos_weight = (all_edges_count - train_graph.num_edges()) / train_graph.num_edges()
+        self.bce_weight = torch.tensor([1 if e == 0 else pos_weight for e in train_graph
+                                       .add_self_loop()
+                                       .adjacency_matrix()
+                                       .to_dense()
+                                       .view(-1)])
+        self.kl_norm = 1 / train_graph.num_nodes()
         self._bce_loss = BCELoss(weight=self.bce_weight)
         self._kl_divergence = \
-            lambda mu, log_sigma: 0.5 * (1 + 2 * log_sigma - mu**2 - torch.exp(log_sigma)**2).sum(1).mean()
+            lambda mu, log_sigma: 0.5 * (1 + 2 * log_sigma - mu ** 2 - torch.exp(log_sigma) ** 2).sum(1).mean()
 
     def forward(self,
                 predictions: torch.Tensor,
@@ -58,8 +63,9 @@ class RunProxy:
         random.seed(args.seed)
         self.dataloader = DataLoader(args)
         self.model  = VGAE(in_feats=self.dataloader.features.shape[1],
-                           hidden_feats=args.hidden_feats).to(args.device)
-        self.loss = Loss(self.dataloader.adj).to(args.device)
+                           hidden_feats=args.hidden_feats,
+                           out_feats=args.out_feats).to(args.device)
+        self.loss = Loss(self.dataloader.train_graph).to(args.device)
         self.optimizer = Adam(self.model.parameters(), lr=args.lr)
         self.train_loss = None
         self.auc = {}
@@ -77,10 +83,10 @@ class RunProxy:
 
     def train(self) -> tuple[torch.Tensor, torch.Tensor]:
         self.model.train()
-        A_hat, bottleneck = self.model(self.dataloader.train_graph, self.dataloader.features)
+        A_hat, bottleneck = self.model(self.dataloader.train_graph.add_self_loop(), self.dataloader.features)
         d = self.model.distribution()
         loss = self.loss(A_hat.view(-1),
-                         self.dataloader.adj.to_dense().view(-1).float(),
+                         self.dataloader.train_graph.add_self_loop().adjacency_matrix().to_dense().view(-1).float(),
                          d.mu,
                          d.log_sigma)
         self.train_loss = loss
@@ -108,9 +114,9 @@ if __name__ == "__main__":
     proxy = RunProxy(args)
     A_hat = None
     bottleneck = None
-    for _ in range(0, 200):
+    for epoch in range(0, 200):
         A_hat, bottleneck = proxy.train()
         proxy.valid(A_hat)
-        print(f"train_loss: {proxy.train_loss}, valid auc: {proxy.auc["valid"]}, valid ap: {proxy.ap["valid"]}")
+        print(f"epoch: {epoch}, train_loss: {proxy.train_loss}, valid auc: {proxy.auc["valid"]}, valid ap: {proxy.ap["valid"]}")
     proxy.test(A_hat)
     print(f"test_auc: {proxy.auc["test"]}, test_ap: {proxy.ap["test"]}")

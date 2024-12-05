@@ -11,6 +11,7 @@ from dgl.nn.pytorch import Sequential
 from abc import ABC, abstractmethod
 
 from attr import dataclass
+from networkx.classes.filters import hide_nodes
 
 
 @dataclass
@@ -33,22 +34,31 @@ class VAE(nn.Module, ABC):
         return self.decoder(bottleneck), bottleneck
 
 class Encoder(nn.Module):
-    def __init__(self, in_feats: int, out_feats: int):
+    def __init__(self, in_feats: int, hidden_feats: int, out_feats: int):
         super().__init__()
         self.distribution: NormalDistribution = NormalDistribution()
         self._shared_gcn = GraphConv(
             in_feats,
-            out_feats,
+            hidden_feats,
+            norm="left",
             activation=nn.ReLU()
         )
         self.encoder = {
             "log_sigma": Sequential(
                 self._shared_gcn,
-                GraphConv(out_feats, out_feats)
+                GraphConv(
+                    hidden_feats,
+                    out_feats,
+                    norm="left",
+                )
             ),
             "mu": Sequential(
                 self._shared_gcn,
-                GraphConv(out_feats, out_feats)
+                GraphConv(
+                    hidden_feats,
+                    out_feats,
+                    norm="left"
+                )
             )
         }
 
@@ -71,9 +81,9 @@ class Decoder(nn.Module):
 
 
 class VGAE(VAE):
-    def __init__(self, in_feats: int, hidden_feats: int):
+    def __init__(self, in_feats: int, hidden_feats: int, out_feats: int):
         super().__init__()
-        self.encoder = Encoder(in_feats=in_feats, out_feats=hidden_feats)
+        self.encoder = Encoder(in_feats=in_feats, hidden_feats=hidden_feats, out_feats=out_feats)
         self.decoder = Decoder()
 
     def distribution(self) -> NormalDistribution:
