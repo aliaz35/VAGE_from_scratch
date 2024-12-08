@@ -1,16 +1,4 @@
-import torch
-import torch.nn.functional as F
-from torch.optim import Adam
-from sklearn.metrics import roc_auc_score, average_precision_score
-import scipy.sparse as sp
-import numpy as np
-import os
-import time
-
-from dataloader import DataLoader
-from input_data import load_data
-from preprocessing import *
-import model
+from dataset import Dataset
 
 import dgl
 import torch
@@ -24,29 +12,22 @@ from model import VGAE
 from utils import parse_cmdline
 from sklearn.metrics import roc_auc_score, average_precision_score
 
-class _KLDivergence(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, mu: torch.Tensor, log_sigma: torch.Tensor) -> torch.Tensor:
-        pass
-
-
 class Loss(nn.Module):
     def __init__(self, train_graph: dgl.DGLGraph):
         super().__init__()
-        all_edges_count = train_graph.num_nodes() * train_graph.num_nodes()
-        self.bce_norm = all_edges_count / ((all_edges_count - train_graph.num_edges()) * 2)
-        pos_weight = (all_edges_count - train_graph.num_edges()) / train_graph.num_edges()
+        g = train_graph.remove_self_loop()
+        all_edges_count = g.num_nodes() * g.num_nodes()
+        self.bce_norm = all_edges_count / ((all_edges_count - g.num_edges()) * 2)
+        pos_weight = (all_edges_count - g.num_edges()) / g.num_edges()
         self.bce_weight = torch.tensor([1 if e == 0 else pos_weight for e in train_graph
-                                       .add_self_loop()
                                        .adjacency_matrix()
                                        .to_dense()
                                        .view(-1)])
-        self.kl_norm = 1 / train_graph.num_nodes()
+        self.kl_norm = 1 / g.num_nodes()
         self._bce_loss = BCELoss(weight=self.bce_weight)
         self._kl_divergence = \
             lambda mu, log_sigma: 0.5 * (1 + 2 * log_sigma - mu ** 2 - torch.exp(log_sigma) ** 2).sum(1).mean()
+        # kl_divergence = 0.5/ A_pred.size(0) * (1 + 2*model.logstd - model.mean**2 - torch.exp(model.logstd)**2).sum(1).mean()
 
     def forward(self,
                 predictions: torch.Tensor,
@@ -61,7 +42,7 @@ class RunProxy:
     def __init__(self, args: argparse.Namespace) -> None:
         torch.manual_seed(args.seed)
         random.seed(args.seed)
-        self.dataloader = DataLoader(args)
+        self.dataloader = Dataset(args)
         self.model  = VGAE(in_feats=self.dataloader.features.shape[1],
                            hidden_feats=args.hidden_feats,
                            out_feats=args.out_feats).to(args.device)
@@ -83,14 +64,30 @@ class RunProxy:
 
     def train(self) -> tuple[torch.Tensor, torch.Tensor]:
         self.model.train()
-        A_hat, bottleneck = self.model(self.dataloader.train_graph.add_self_loop(), self.dataloader.features)
+        # A_hat, bottleneck = self.model(self.dataloader.train_graph, self.dataloader.features)
+        # d = self.model.distribution()
+        # l = self.loss(A_hat.view(-1),
+        #                  self.dataloader.train_graph.adjacency_matrix().to_dense().view(-1),
+        #                  d.mu,
+        #                  d.log_sigma)
+        # self.train_loss = l
+        # l.backward()
+        # self.optimizer.step()
+
+        A_hat, bottleneck = self.model(self.dataloader.train_graph, self.dataloader.features)
         d = self.model.distribution()
-        loss = self.loss(A_hat.view(-1),
-                         self.dataloader.train_graph.add_self_loop().adjacency_matrix().to_dense().view(-1).float(),
+        self.optimizer.zero_grad()
+        # loss = log_lik = norm*F.binary_cross_entropy(A_pred.view(-1), dl.train_graph.adjacency_matrix().to_dense().view(-1), weight = weight_tensor)
+        self.train_loss = self.loss(A_hat.view(-1),
+                         self.dataloader.train_graph.adjacency_matrix().to_dense().view(-1).float(),
                          d.mu,
                          d.log_sigma)
-        self.train_loss = loss
-        loss.backward()
+
+        # if args.model == 'VGAE':
+        #     kl_divergence = 0.5/ A_pred.size(0) * (1 + 2*d.log_sigma - d.mu**2 - torch.exp(d.log_sigma)**2).sum(1).mean()
+        #     loss -= kl_divergence
+
+        self.train_loss.backward()
         self.optimizer.step()
         return A_hat, bottleneck
 
