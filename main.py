@@ -19,15 +19,12 @@ class Loss(nn.Module):
         all_edges_count = g.num_nodes() * g.num_nodes()
         self.bce_norm = all_edges_count / ((all_edges_count - g.num_edges()) * 2)
         pos_weight = (all_edges_count - g.num_edges()) / g.num_edges()
-        self.bce_weight = torch.tensor([1 if e == 0 else pos_weight for e in train_graph
-                                       .adjacency_matrix()
-                                       .to_dense()
-                                       .view(-1)])
+        self.bce_weight = torch.ones(all_edges_count)
+        self.bce_weight[train_graph.adjacency_matrix().to_dense().view(-1) == 1] *= pos_weight
         self.kl_norm = 1 / g.num_nodes()
         self._bce_loss = BCELoss(weight=self.bce_weight)
         self._kl_divergence = \
             lambda mu, log_sigma: 0.5 * (1 + 2 * log_sigma - mu ** 2 - torch.exp(log_sigma) ** 2).sum(1).mean()
-        # kl_divergence = 0.5/ A_pred.size(0) * (1 + 2*model.logstd - model.mean**2 - torch.exp(model.logstd)**2).sum(1).mean()
 
     def forward(self,
                 predictions: torch.Tensor,
