@@ -1,4 +1,4 @@
-from dataset import Dataset
+from dataset import Dataset, DataLoader
 
 import dgl
 import torch
@@ -42,11 +42,12 @@ class RunProxy:
     def __init__(self, args: argparse.Namespace) -> None:
         torch.manual_seed(args.seed)
         random.seed(args.seed)
-        self.dataloader = Dataset(args)
-        self.model  = VGAE(in_feats=self.dataloader.features.shape[1],
+        self.dataloader = DataLoader(args)
+        self.dataset = self.dataloader.load()
+        self.model  = VGAE(in_feats=self.dataset.features.shape[1],
                            hidden_feats=args.hidden_feats,
                            out_feats=args.out_feats).to(args.device)
-        self.loss = Loss(self.dataloader.train_graph).to(args.device)
+        self.loss = Loss(self.dataset.train_graph).to(args.device)
         self.optimizer = Adam(self.model.parameters(), lr=args.lr)
         self.train_loss = None
         self.auc = {}
@@ -57,36 +58,20 @@ class RunProxy:
         y_true = []
         for e in edges:
             y_score.append(A_hat[*e])
-            y_true.append(self.dataloader.adj[*e])
+            y_true.append(self.dataset.adj[*e])
 
         return roc_auc_score(y_true, y_score),\
             average_precision_score(y_true, y_score)
 
     def train(self) -> tuple[torch.Tensor, torch.Tensor]:
         self.model.train()
-        # A_hat, bottleneck = self.model(self.dataloader.train_graph, self.dataloader.features)
-        # d = self.model.distribution()
-        # l = self.loss(A_hat.view(-1),
-        #                  self.dataloader.train_graph.adjacency_matrix().to_dense().view(-1),
-        #                  d.mu,
-        #                  d.log_sigma)
-        # self.train_loss = l
-        # l.backward()
-        # self.optimizer.step()
-
-        A_hat, bottleneck = self.model(self.dataloader.train_graph, self.dataloader.features)
+        A_hat, bottleneck = self.model(self.dataset.train_graph, self.dataset.features)
         d = self.model.distribution()
         self.optimizer.zero_grad()
-        # loss = log_lik = norm*F.binary_cross_entropy(A_pred.view(-1), dl.train_graph.adjacency_matrix().to_dense().view(-1), weight = weight_tensor)
         self.train_loss = self.loss(A_hat.view(-1),
-                         self.dataloader.train_graph.adjacency_matrix().to_dense().view(-1).float(),
+                         self.dataset.train_graph.adjacency_matrix().to_dense().view(-1).float(),
                          d.mu,
                          d.log_sigma)
-
-        # if args.model == 'VGAE':
-        #     kl_divergence = 0.5/ A_pred.size(0) * (1 + 2*d.log_sigma - d.mu**2 - torch.exp(d.log_sigma)**2).sum(1).mean()
-        #     loss -= kl_divergence
-
         self.train_loss.backward()
         self.optimizer.step()
         return A_hat, bottleneck
@@ -94,14 +79,14 @@ class RunProxy:
     @torch.no_grad()
     def valid(self, A_hat: torch.Tensor) -> None:
         self.model.eval()
-        auc, ap = self._evaluate(self.dataloader.valid_edges, A_hat)
+        auc, ap = self._evaluate(self.dataset.valid_edges, A_hat)
         self.auc["valid"] = auc
         self.ap["valid"] = ap
 
     @torch.no_grad()
     def test(self, A_hat: torch.Tensor) -> None:
         self.model.eval()
-        auc, ap = self._evaluate(self.dataloader.test_edges, A_hat)
+        auc, ap = self._evaluate(self.dataset.test_edges, A_hat)
         self.auc["test"] = auc
         self.ap["test"] = ap
 

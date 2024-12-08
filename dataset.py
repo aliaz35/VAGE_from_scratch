@@ -27,26 +27,17 @@ class Dataset:
 
 class DataLoader:
     def __init__(self, args: argparse.Namespace):
-        self.args = args
         self.dataset = args.dataset
-        raw_data = read_data(args.dataset)
-        self.adj, self.features = process_raw_data(raw_data)
-        sampled_edges = self._sample_edge()
-        self.train_graph = dgl.to_bidirected(dgl.graph(
-            tuple(zip(*sampled_edges["train"])),
-            num_nodes=self.adj.shape[0]
-        ).add_self_loop())
-        self.valid_edges = sampled_edges["valid"]
-        self.test_edges = sampled_edges["test"]
+        self.split_ratio = args.split_ratio
 
     def load(self) -> Dataset:
         _raw_data = self.read_data()
         features = self.load_features(_raw_data)
         adj = self.load_adj(_raw_data)
-        _sampled_edges = self._sample_edge()
+        _sampled_edges = self._sample_edge(adj)
         train_graph = dgl.to_bidirected(dgl.graph(
             tuple(zip(*_sampled_edges["train"])),
-            num_nodes=self.adj.shape[0]
+            num_nodes=adj.shape[0]
         ).add_self_loop())
         valid_edges = _sampled_edges["valid"]
         test_edges = _sampled_edges["test"]
@@ -98,20 +89,20 @@ class DataLoader:
             )
         }
 
-    def _sample_edge(self):
-        sampled_edges = self._split_edges(self.adj
+    def _sample_edge(self, adj: torch.Tensor):
+        sampled_edges = self._split_edges(adj
                  .to_dense()
                  .triu(1)
                  .nonzero())
 
         return {
             "train" : sampled_edges["train"],
-            "valid" : torch.vstack((sampled_edges["valid"], self._sample_negative(len(sampled_edges["valid"])))),
-            "test": torch.vstack((sampled_edges["test"], self._sample_negative(len(sampled_edges["test"])))),
+            "valid" : torch.vstack((sampled_edges["valid"], self._sample_negative(adj, len(sampled_edges["valid"])))),
+            "test": torch.vstack((sampled_edges["test"], self._sample_negative(adj, len(sampled_edges["test"])))),
         }
 
     def _split_edges(self, edges: torch.Tensor) -> dict[str, torch.Tensor]:
-        ratios = list(map(lambda x: int(x) / 100, self.args.split_ratio.split(':')))
+        ratios = list(map(lambda x: int(x) / 100, self.split_ratio.split(':')))
         assert sum(ratios) == 1 and len(ratios) == 3
 
         ret = {}
@@ -128,15 +119,15 @@ class DataLoader:
 
         return ret
 
-    def _sample_negative(self, length: int) -> torch.Tensor:
+    def _sample_negative(self, adj: torch.Tensor, length: int) -> torch.Tensor:
         ret = set()
         while len(ret) < length:
-            u = random.randrange(0, self.adj.shape[0])
-            v = random.randrange(0, self.adj.shape[0])
+            u = random.randrange(0, adj.shape[0])
+            v = random.randrange(0, adj.shape[0])
             if (u == v
                     or (u, v) in ret
                     or (v, u) in ret
-                    or self.adj[u][v] == 1):
+                    or adj[u][v] == 1):
                 continue
             ret.add((u, v))
 
@@ -172,4 +163,3 @@ class DataLoader:
     @staticmethod
     def load_adj(raw_data: dict[str, torch.Tensor]) -> torch.Tensor:
         return raw_data["graph"]
-

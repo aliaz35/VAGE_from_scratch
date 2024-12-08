@@ -8,10 +8,7 @@ import dgl.function as fn
 from dgl.nn.pytorch import GraphConv
 from dgl.nn.pytorch import Sequential
 
-from abc import ABC, abstractmethod
-
 from attr import dataclass
-from networkx.classes.filters import hide_nodes
 
 
 @dataclass
@@ -31,8 +28,20 @@ class Encoder(nn.Module):
             in_feats,
             hidden_feats,
             weight=True,
-            norm="left",
+            # norm="left",
             activation=nn.ReLU()
+        )
+        self.mu_gcn = GraphConv(
+            hidden_feats,
+            out_feats,
+            weight=True,
+            # norm="none",
+        )
+        self.log_sigma_gcn = GraphConv(
+            hidden_feats,
+            out_feats,
+            weight=True,
+            # norm="none",
         )
         self.encoder = {
             "log_sigma": Sequential(
@@ -40,8 +49,8 @@ class Encoder(nn.Module):
                 GraphConv(
                     hidden_feats,
                     out_feats,
-                    weight=True,
-                    norm="left",
+                    weight=True
+                    # norm="left",
                 )
             ),
             "mu": Sequential(
@@ -49,16 +58,23 @@ class Encoder(nn.Module):
                 GraphConv(
                     hidden_feats,
                     out_feats,
-                    weight=True,
-                    norm="left"
+                    weight=True
+                    # norm="left"
                 )
             )
         }
 
     def forward(self, graph: dgl.DGLGraph, feat: torch.Tensor) -> torch.Tensor:
+        h = self._shared_gcn(graph, feat)
+        mu = self.mu_gcn(graph, h)
+        log_sigma = self.log_sigma_gcn(graph, h)
+        # self.distribution =  NormalDistribution(
+        #     mu          = self.encoder["mu"](graph, feat),
+        #     log_sigma   = self.encoder["log_sigma"](graph, feat)
+        # )
         self.distribution =  NormalDistribution(
-            mu          = self.encoder["mu"](graph, feat),
-            log_sigma   = self.encoder["log_sigma"](graph, feat)
+            mu          = mu,
+            log_sigma   = log_sigma
         )
 
         return sample_latent(self.distribution)
@@ -69,7 +85,7 @@ class Decoder(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, bottleneck: torch.Tensor) -> torch.Tensor:
-        bottleneck = bottleneck / bottleneck.norm(dim=1, keepdim=True)
+        # bottleneck = bottleneck / bottleneck.norm(dim=1, keepdim=True)
         return self.sigmoid(bottleneck @ bottleneck.t())
 
 class VGAE(nn.Module):
